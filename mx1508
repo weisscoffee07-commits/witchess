@@ -1,0 +1,81 @@
+import bluetooth
+import aioble
+import asyncio
+from machine import Pin, PWM
+
+# Инициализация сервоприводов
+servo_claw = PWM(Pin(14), freq=50)   # Клешня (сжать/разжать)
+servo_arm = PWM(Pin(15), freq=50)    # Рука (поднять/опустить)
+
+def set_servo_angle(servo, angle):
+    # Преобразование угла 0-180 в рабочий цикл PWM (обычно от 40 до 115 для ESP32/Pico)
+    duty = int((angle / 180 * 75) + 40)
+    servo.duty(duty)
+
+# Настройка моторов (PWM пины)
+motor_a_f = PWM(Pin(12), freq=1000)
+motor_a_b = PWM(Pin(13), freq=1000)
+motor_b_f = PWM(Pin(14), freq=1000)
+motor_b_b = PWM(Pin(15), freq=1000)
+
+# Настройка сервопривода (клешня)
+servo = PWM(Pin(27), freq=50)
+
+def set_motor(ma_f, ma_b, mb_f, mb_b):
+    motor_a_f.duty(ma_f)
+    motor_a_b.duty(ma_b)
+    motor_b_f.duty(mb_f)
+    motor_b_b.duty(mb_b)
+
+def set_servo(angle):
+    # Примерный расчет duty для серво (от 40 до 115)
+    duty = int(((angle / 180) * 2 + 0.5) / 20 * 1023)
+    servo.duty(duty)
+
+# BLE UUIDs
+_SERVICE_UUID = bluetooth.UUID(0x1848)
+_CHAR_UUID = bluetooth.UUID(0x2A6E)
+
+async def peripheral_task():
+    service = aioble.Service(_SERVICE_UUID)
+    control_char = aioble.Characteristic(service, _CHAR_UUID, write=True, capture=True)
+    aioble.register_services(service)
+
+    while True:
+        async with await aioble.advertise(
+            250000,
+            name="Robot-8-Btn",
+            services=[_SERVICE_UUID],
+        ) as connection:
+            print("Подключено")
+            
+            while connection.is_connected():
+                conn, data = await control_char.written()
+                command = data.decode().strip().lower()
+                
+                # Логика управления (8 команд)
+                if command == "forward":      # 1. Вперед
+                    set_motor(1023, 0, 1023, 0)
+                elif command == "backward":   # 2. Назад
+                    set_motor(0, 1023, 0, 1023)
+                elif command == "left":       # 3. Влево
+                    set_motor(0, 1023, 1023, 0)
+                elif command == "right":      # 4. Вправо
+                    set_motor(1023, 0, 0, 1023)
+                elif command == "claw_open":  # 6. Открыть клешню
+                    set_servo_angle(servo_claw, 0)
+                elif command == "claw_close": # 7. Закрыть клешню
+                    set_servo_angle(servo_claw, 90)
+                elif command == "arm_up":      # 8. Поднять руку
+                    set_servo_angle(servo_arm, 180)
+                elif command == "arm_down":    # 9. Опустить руку
+                    set_servo_angle(servo_arm, 0)
+
+async def main():
+    await peripheral_task()
+
+try:
+    asyncio.run(main())
+except KeyboardInterrupt:
+    set_motor(0, 0, 0, 0)
+    print("Робот остановлен")
